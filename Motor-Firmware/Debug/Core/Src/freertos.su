@@ -1,0 +1,7 @@
+../Core/Src/freertos.c:147:6:MX_FREERTOS_Init	8	static
+../Core/Src/freertos.c:204:6:StartDefaultTask	16	static
+../Core/Src/freertos.c:223:6:getADCValues	40	static
+../Core/Src/freertos.c:279:6:StartSendRegen	40	static
+../Core/Src/freertos.c:305:6:startSendThrottle	48	static
+../Core/Src/freertos.c:337:6:startUpdateFlags	16	static
+../Core/Src/freertos.c:356:6:StartSendIdle	40	static
