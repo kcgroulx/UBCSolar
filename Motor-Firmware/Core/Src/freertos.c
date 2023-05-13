@@ -283,9 +283,12 @@ void StartSendRegen(void *argument)
   for(;;)
   {
 	  //TODO Replace with osEventFlagsWait()
+      osEventFlagsWait(commandEventFlagsHandle, REGEN_READY, osFlagsWaitAll, osWaitForever);
+
 
 	  if(state == REGEN_READY)
 	  {
+		  // TODO Impliment CAN instead of UART and test with PiCAN
 		  sprintf(msg, "  Regen State   \r");
 		  HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
 	  }
