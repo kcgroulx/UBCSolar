@@ -32,8 +32,7 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-union FloatBytes current;
-union FloatBytes velocity;
+
 
 struct InputFlags event_flags;
 
@@ -57,6 +56,9 @@ enum DriveState {
 	MOTOR_OVERHEAT = (uint32_t) 0x0010  	/**< Indicates that when the motor is over the maximum temperature. The value is set in the
 	 	 	 	 	 	 	 	 	 	 	 sendMotorOverheatTask which checks the incoming motor temperature received over CAN. */
 } state;
+
+uint16_t ADC_throttle_val;
+uint16_t ADC_regen_val;
 
 /* USER CODE END PTD */
 
@@ -96,20 +98,6 @@ const osThreadAttr_t GetADCValues_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for sendRegen */
-osThreadId_t sendRegenHandle;
-const osThreadAttr_t sendRegen_attributes = {
-  .name = "sendRegen",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityBelowNormal,
-};
-/* Definitions for sendThrottle */
-osThreadId_t sendThrottleHandle;
-const osThreadAttr_t sendThrottle_attributes = {
-  .name = "sendThrottle",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityLow,
-};
 /* Definitions for updateFlags */
 osThreadId_t updateFlagsHandle;
 const osThreadAttr_t updateFlags_attributes = {
@@ -117,10 +105,10 @@ const osThreadAttr_t updateFlags_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for sendIdle */
-osThreadId_t sendIdleHandle;
-const osThreadAttr_t sendIdle_attributes = {
-  .name = "sendIdle",
+/* Definitions for motorStateMachi */
+osThreadId_t motorStateMachiHandle;
+const osThreadAttr_t motorStateMachi_attributes = {
+  .name = "motorStateMachi",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
@@ -132,10 +120,8 @@ const osThreadAttr_t sendIdle_attributes = {
 
 void StartDefaultTask(void *argument);
 void getADCValues(void *argument);
-void StartSendRegen(void *argument);
-void startSendThrottle(void *argument);
 void startUpdateFlags(void *argument);
-void StartSendIdle(void *argument);
+void startMotorStateMachine(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -172,17 +158,11 @@ void MX_FREERTOS_Init(void) {
   /* creation of GetADCValues */
   GetADCValuesHandle = osThreadNew(getADCValues, NULL, &GetADCValues_attributes);
 
-  /* creation of sendRegen */
-  sendRegenHandle = osThreadNew(StartSendRegen, NULL, &sendRegen_attributes);
-
-  /* creation of sendThrottle */
-  sendThrottleHandle = osThreadNew(startSendThrottle, NULL, &sendThrottle_attributes);
-
   /* creation of updateFlags */
   updateFlagsHandle = osThreadNew(startUpdateFlags, NULL, &updateFlags_attributes);
 
-  /* creation of sendIdle */
-  sendIdleHandle = osThreadNew(StartSendIdle, NULL, &sendIdle_attributes);
+  /* creation of motorStateMachi */
+  motorStateMachiHandle = osThreadNew(startMotorStateMachine, NULL, &motorStateMachi_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -223,9 +203,6 @@ void StartDefaultTask(void *argument)
 void getADCValues(void *argument)
 {
   /* USER CODE BEGIN getADCValues */
-  uint16_t ADC_throttle_val;
-  uint16_t ADC_regen_val;
-  char msg[20];
   /* Infinite loop */
   for(;;)
   {
@@ -234,99 +211,17 @@ void getADCValues(void *argument)
 	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
 	ADC_throttle_val = HAL_ADC_GetValue(&hadc1);
 
+	event_flags.throttle_pressed = ADC_throttle_val > ADC_DEADZONE;
+
 	HAL_ADC_Start(&hadc2);
 	HAL_ADC_PollForConversion(&hadc2, HAL_MAX_DELAY);
 	ADC_regen_val = HAL_ADC_GetValue(&hadc2);
 
-	// Checks if regen paddle is pressed
-	if(ADC_regen_val > ADC_DEADZONE)
-	{
-		velocity.float_value = 0.0;
-		current.float_value = (ADC_regen_val - ADC_DEADZONE >= 0 ? ((float)(ADC_regen_val - ADC_DEADZONE))/ADC_MAX : 0.0);
-	}
-	else if(ADC_throttle_val > ADC_DEADZONE)
-	{
-		//Checks for reverse
-		if (event_flags.reverse_enable)
-			velocity.float_value = -100.0;
-		else
-			velocity.float_value = 100.0;
-
-		current.float_value = (ADC_throttle_val - ADC_DEADZONE >= 0 ? ((float)(ADC_throttle_val - ADC_DEADZONE))/ADC_MAX : 0.0);
-
-		state = NORMAL_READY;
-	}
-	else
-	{
-		state = IDLE;
-	}
- &
-	//HAL_UART_Transmit_IT(&huart2, msg, sizeof(msg));
+	event_flags.regen_pressed = ADC_regen_val > ADC_DEADZONE;
 
     osDelay(ADC_POLL_DELAY);
   }
   /* USER CODE END getADCValues */
-}
-
-/* USER CODE BEGIN Header_StartSendRegen */
-/**
-* @brief Function implementing the sendRegen thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartSendRegen */
-void StartSendRegen(void *argument)
-{
-  /* USER CODE BEGIN StartSendRegen */
-  char msg[20];
-  /* Infinite loop */
-  for(;;)
-  {
-	  //TODO Replace with osEventFlagsWait()
-      osEventFlagsWait(commandEventFlagsHandle, REGEN_READY, osFlagsWaitAll, osWaitForever);
-
-
-	  if(state == REGEN_READY)
-	  {
-		  // TODO Impliment CAN instead of UART and test with PiCAN
-		  sprintf(msg, "  Regen State   \r");
-		  HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
-	  }
-	  osDelay(10);
-  }
-  /* USER CODE END StartSendRegen */
-}
-
-/* USER CODE BEGIN Header_startSendThrottle */
-/**
-* @brief Function implementing the sendThrottle thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_startSendThrottle */
-void startSendThrottle(void *argument)
-{
-  /* USER CODE BEGIN startSendThrottle */
-  uint8_t CAN_msg[CAN_DATA_LENGTH];
-  char msg[20];
-  /* Infinite loop */
-  for(;;)
-  {
-	if(state == NORMAL_READY)
-	{
-	  sprintf(msg, "  Throttle State   \r");
-	  HAL_UART_Transmit(&huart2, msg, sizeof(msg), 100);
-
-	  // writing data into data_send array which will be sent as a CAN message
-	  for (int i = 0; i < (uint8_t) CAN_DATA_LENGTH / 2; i++) {
-		  CAN_msg[i] = velocity.bytes[i];
-	      CAN_msg[4 + i] = current.bytes[i];
-	  }
-	  HAL_CAN_AddTxMessage(&hcan, &drive_command_header, CAN_msg, &can_mailbox);
-	}
-    osDelay(10);
-  }
-  /* USER CODE END startSendThrottle */
 }
 
 /* USER CODE BEGIN Header_startUpdateFlags */
@@ -343,14 +238,17 @@ void startUpdateFlags(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	  // order of priorities beginning with most important: motor over heating, regen braking, encoder motor command, cruise control
-	  if (event_flags.regen_enable && regen_value > 0 && battery_soc < BATTERY_REGEN_THRESHOLD) {
+
+	  // TODO impliment Mechanical brake signal to state machine
+	  // TODO impliment battery charge check for regen
+	  // order of priorities beginning with most important: regen braking, encoder motor command, cruise control
+	  if (event_flags.regen_pressed) {
 		  state = REGEN_READY;
 	  }
-	  else if (!event_flags.encoder_value_is_zero && !event_flags.cruise_status) {
+	  else if (event_flags.throttle_pressed) {
 	  	 state = NORMAL_READY;
 	  }
-	  else if (event_flags.cruise_status && cruise_value > 0 && !event_flags.brake_in) {
+	  else if (event_flags.cruise_status && !event_flags.brake_in) {
 	  	 state = CRUISE_READY;
 	  }
 	  else {
@@ -358,39 +256,80 @@ void startUpdateFlags(void *argument)
 	  }
 
 	  // signals the MCB state to other threads
-	  osEventFlagsSet(commandEventFlagsHandle, state);
-
+	  //osEventFlagsSet(commandEventFlagsHandle, state);
 	  osDelay(EVENT_FLAG_UPDATE_DELAY);
   }
   /* USER CODE END startUpdateFlags */
 }
 
-/* USER CODE BEGIN Header_StartSendIdle */
+/* USER CODE BEGIN Header_startMotorStateMachine */
 /**
-* @brief Function implementing the sendIdle thread.
+* @brief Function implementing the motorStateMachi thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartSendIdle */
-void StartSendIdle(void *argument)
+/* USER CODE END Header_startMotorStateMachine */
+void startMotorStateMachine(void *argument)
 {
-  /* USER CODE BEGIN StartSendIdle */
+  /* USER CODE BEGIN startMotorStateMachine */
+  uint8_t CAN_msg[CAN_DATA_LENGTH];
   char msg[20];
+  union FloatBytes current;
+  union FloatBytes velocity;
   /* Infinite loop */
+
+  //TODO Add Wrapper Functions
   for(;;)
   {
-	if(state == IDLE)
-	{
-		sprintf(msg, "  Idle State   \r");
-	  	HAL_UART_Transmit(&huart2, msg, sizeof(msg), 100);
-	}
+    if(state == REGEN_READY)
+    {
+    	velocity.float_value = 0;
+    	current.float_value = (ADC_regen_val - ADC_DEADZONE >= 0 ? ((float)(ADC_regen_val - ADC_DEADZONE))/ADC_MAX : 0.0);
+    }
+    else if(state == NORMAL_READY)
+    {
+    	if (event_flags.reverse_enable)
+    		velocity.float_value = -100.0;
+    	else
+    		velocity.float_value = 100.0;
+
+    	current.float_value = (ADC_throttle_val - ADC_DEADZONE >= 0 ? ((float)(ADC_throttle_val - ADC_DEADZONE))/ADC_MAX : 0.0);
+    }
+    else
+    {
+    	velocity.float_value = 0;
+    	current.float_value = 0;
+    }
+
+    //TODO Replace with CAN
+    sprintf(msg, "V:%d C:%d      \r", (int)velocity.float_value, (int)(current.float_value*100));
+    HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
     osDelay(10);
   }
-  /* USER CODE END StartSendIdle */
+  /* USER CODE END startMotorStateMachine */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	char msg[20];
+	if(GPIO_Pin == BTN_CRUISE_TOGGLE_Pin){
+		sprintf(msg, "\nBUTTON_1 PRESSED\n");
+		HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
+	}
+	else if(GPIO_Pin == BTN_CRUISE_UP_Pin){
+		sprintf(msg, "\nBUTTON_2 PRESSED\n");
+		HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
+	}
+	else if(GPIO_Pin == BTN_CRUISE_DOWN_Pin){
+		sprintf(msg, "\nBUTTON_3 PRESSED\n");
+		HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
+	}
+	else if(GPIO_Pin == BTN_REVERSE_Pin){
+		event_flags.reverse_enable = !event_flags.reverse_enable;
+	}
+	//osDelay(5);
+}
 /* USER CODE END Application */
 

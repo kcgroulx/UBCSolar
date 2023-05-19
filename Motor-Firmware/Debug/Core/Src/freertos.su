@@ -1,7 +1,6 @@
-../Core/Src/freertos.c:147:6:MX_FREERTOS_Init	8	static
-../Core/Src/freertos.c:204:6:StartDefaultTask	16	static
-../Core/Src/freertos.c:223:6:getADCValues	40	static
-../Core/Src/freertos.c:279:6:StartSendRegen	40	static
-../Core/Src/freertos.c:305:6:startSendThrottle	48	static
-../Core/Src/freertos.c:337:6:startUpdateFlags	16	static
-../Core/Src/freertos.c:356:6:StartSendIdle	40	static
+../Core/Src/freertos.c:133:6:MX_FREERTOS_Init	8	static
+../Core/Src/freertos.c:184:6:StartDefaultTask	16	static
+../Core/Src/freertos.c:203:6:getADCValues	16	static
+../Core/Src/freertos.c:234:6:startUpdateFlags	16	static
+../Core/Src/freertos.c:272:6:startMotorStateMachine	64	static
+../Core/Src/freertos.c:314:6:HAL_GPIO_EXTI_Callback	40	static

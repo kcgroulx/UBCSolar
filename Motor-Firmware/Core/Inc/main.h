@@ -43,8 +43,11 @@ typedef union FloatBytes {
 } FloatBytes;
 
 typedef struct InputFlags {
-  volatile uint8_t regen_enable;			/**< Records the position of the regen switch. A value of 0x01 indicates regenerative braking is
+  volatile uint8_t regen_pressed;			/**< Records the position of the regen padle. A value of 0x01 indicates regenerative braking is
   	  	  	  	  	  	  	  	  	  	  	 	 enabled and a value of 0x00 indicates that regen is disabled. */
+
+  volatile uint8_t throttle_pressed;			/**< Records the position of the throttle. A value of 0x01 indicates throttle is pressed and
+    	  	  	  	  	  	  	  	  	  	  	 0x00 indicates that throttle is off. */
 
   volatile uint8_t reverse_enable;			/**< Records the position of the reverse switch. A value of 0x01 indicates "reverse" is enabled
    	   	   	   	   	   	   	   	   	   	   	 	 and a value of 0x00 indicates that "reverse" is disabled. */
@@ -64,8 +67,6 @@ typedef struct InputFlags {
   	  	  	  	  	  	  	  	  	  	  	  	 or not. A value of 0x01 means the regen value is zero while a value of 0x00
   	  	  	  	  	  	  	  	  	  	  	  	 means the regen value is not zero. */
 
-  volatile uint8_t motor_overheat;			/**< Flag that indicates if the motor is above its maximum temperature. A value of 0x01 means that
-   	   	   	   	   	   	   	   	   	   	   	   	 the motor is over heating while 0x00 means that the motor condition is acceptable. */
 
 } InputFlags;
 
@@ -94,9 +95,6 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define B1_Pin GPIO_PIN_13
-#define B1_GPIO_Port GPIOC
-#define B1_EXTI_IRQn EXTI15_10_IRQn
 #define ADC_Throttle_Pin GPIO_PIN_0
 #define ADC_Throttle_GPIO_Port GPIOA
 #define ADC_Regen_Pin GPIO_PIN_1
@@ -107,6 +105,18 @@ void Error_Handler(void);
 #define USART_RX_GPIO_Port GPIOA
 #define LD2_Pin GPIO_PIN_5
 #define LD2_GPIO_Port GPIOA
+#define BTN_CRUISE_TOGGLE_Pin GPIO_PIN_12
+#define BTN_CRUISE_TOGGLE_GPIO_Port GPIOB
+#define BTN_CRUISE_TOGGLE_EXTI_IRQn EXTI15_10_IRQn
+#define BTN_CRUISE_UP_Pin GPIO_PIN_13
+#define BTN_CRUISE_UP_GPIO_Port GPIOB
+#define BTN_CRUISE_UP_EXTI_IRQn EXTI15_10_IRQn
+#define BTN_CRUISE_DOWN_Pin GPIO_PIN_14
+#define BTN_CRUISE_DOWN_GPIO_Port GPIOB
+#define BTN_CRUISE_DOWN_EXTI_IRQn EXTI15_10_IRQn
+#define BTN_REVERSE_Pin GPIO_PIN_15
+#define BTN_REVERSE_GPIO_Port GPIOB
+#define BTN_REVERSE_EXTI_IRQn EXTI15_10_IRQn
 #define TMS_Pin GPIO_PIN_13
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
