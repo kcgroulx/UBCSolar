@@ -32,33 +32,15 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
-
-struct InputFlags event_flags;
-
 enum DriveState {
-	INVALID = (uint32_t) 0x0000,		    /**< Indicates an error state. The MCB should not ever be in this state. */
-
-    IDLE = (uint32_t) 0x0001,			    /**< Indicates an idle state. The MCB will enter this state when the car is stationary */
-
-    NORMAL_READY = (uint32_t) 0x0002,	    /**< Indicates a normal state. The MCB will enter this state when neither cruise control is
-                                              on nor regenerative braking. In this state, the pedal encoder directly determines the
-                                              motor current and therefore the throttle provided by the motor. */
-
-    REGEN_READY = (uint32_t) 0x0004,	    /**< Indicates that regenerative braking is active. The MCB will enter this state when
-                                              REGEN_EN is enabled and the regen value is more than zero. This state takes priority
-                                              over NORMAL_READY, CRUISE_READY, and IDLE.*/
-
-	CRUISE_READY = (uint32_t) 0x0008,		/**< Indicates that cruise control is active. The MCB will enter this state when CRUISE_EN
-											 is enabled and the cruise value is more than zero. Pressing the pedal down or pressing
-											 the brake will exit the cruise control state. */
-
-	MOTOR_OVERHEAT = (uint32_t) 0x0010  	/**< Indicates that when the motor is over the maximum temperature. The value is set in the
-	 	 	 	 	 	 	 	 	 	 	 sendMotorOverheatTask which checks the incoming motor temperature received over CAN. */
+	INVALID = (uint32_t) 0x0000,
+    IDLE = (uint32_t) 0x0001,
+    NORMAL_READY = (uint32_t) 0x0002,
+    REGEN_READY = (uint32_t) 0x0004,
+	CRUISE_READY = (uint32_t) 0x0008,
+	MOTOR_OVERHEAT = (uint32_t) 0x0010
 } state;
 
-uint16_t ADC_throttle_val;
-uint16_t ADC_regen_val;
 
 /* USER CODE END PTD */
 
@@ -73,6 +55,11 @@ uint16_t ADC_regen_val;
 #define CAN_DATA_LENGTH 8 			// incoming data is 64 bytes total
 #define EVENT_FLAG_UPDATE_DELAY 5
 
+#define CRUISE_INCREMENT_VAL 1 // How much pressing the cruise up/down buttons increase or decrease the cruise velocity
+#define CRUISE_MAX 30 // Max cruise speed
+#define CRUISE_MIN 5 // Min cruise speed
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -82,6 +69,15 @@ uint16_t ADC_regen_val;
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+uint16_t ADC_throttle_val;
+uint16_t ADC_regen_val;
+
+struct InputFlags event_flags;
+
+int velocity_cruise;
+
+// TODO Impliment task to get the current velocity
+int velocity_current = 20;
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -238,25 +234,21 @@ void startUpdateFlags(void *argument)
   /* Infinite loop */
   for(;;)
   {
-
 	  // TODO impliment Mechanical brake signal to state machine
 	  // TODO impliment battery charge check for regen
 	  // order of priorities beginning with most important: regen braking, encoder motor command, cruise control
 	  if (event_flags.regen_pressed) {
 		  state = REGEN_READY;
 	  }
-	  else if (event_flags.throttle_pressed) {
-	  	 state = NORMAL_READY;
-	  }
-	  else if (event_flags.cruise_status && !event_flags.brake_in) {
+	  else if (event_flags.cruise_status) {
 	  	 state = CRUISE_READY;
+	  }
+	  else if (event_flags.throttle_pressed) {
+	  	  	 state = NORMAL_READY;
 	  }
 	  else {
 	  	 state = IDLE;
 	  }
-
-	  // signals the MCB state to other threads
-	  //osEventFlagsSet(commandEventFlagsHandle, state);
 	  osDelay(EVENT_FLAG_UPDATE_DELAY);
   }
   /* USER CODE END startUpdateFlags */
@@ -272,8 +264,8 @@ void startUpdateFlags(void *argument)
 void startMotorStateMachine(void *argument)
 {
   /* USER CODE BEGIN startMotorStateMachine */
-  uint8_t CAN_msg[CAN_DATA_LENGTH];
   char msg[20];
+  char mode;
   union FloatBytes current;
   union FloatBytes velocity;
   /* Infinite loop */
@@ -285,6 +277,8 @@ void startMotorStateMachine(void *argument)
     {
     	velocity.float_value = 0;
     	current.float_value = (ADC_regen_val - ADC_DEADZONE >= 0 ? ((float)(ADC_regen_val - ADC_DEADZONE))/ADC_MAX : 0.0);
+
+    	mode = 'R';
     }
     else if(state == NORMAL_READY)
     {
@@ -294,15 +288,26 @@ void startMotorStateMachine(void *argument)
     		velocity.float_value = 100.0;
 
     	current.float_value = (ADC_throttle_val - ADC_DEADZONE >= 0 ? ((float)(ADC_throttle_val - ADC_DEADZONE))/ADC_MAX : 0.0);
+
+    	mode = 'D';
+    }
+    else if (state == CRUISE_READY)
+    {
+    	velocity.float_value = velocity_cruise;
+    	current.float_value = 1;
+
+    	mode = 'C';
     }
     else
     {
     	velocity.float_value = 0;
     	current.float_value = 0;
+
+    	mode = 'I';
     }
 
     //TODO Replace with CAN
-    sprintf(msg, "V:%d C:%d      \r", (int)velocity.float_value, (int)(current.float_value*100));
+    sprintf(msg, "S:%c V:%d C:%d   \r", mode,(int)velocity.float_value, (int)(current.float_value*100));
     HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
     osDelay(10);
   }
@@ -314,20 +319,35 @@ void startMotorStateMachine(void *argument)
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 	char msg[20];
-	if(GPIO_Pin == BTN_CRUISE_TOGGLE_Pin){
-		sprintf(msg, "\nBUTTON_1 PRESSED\n");
-		HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
+	if(GPIO_Pin == BTN_CRUISE_TOGGLE_Pin)
+	{
+		if(state == NORMAL_READY || state == CRUISE_READY)
+		{
+			event_flags.cruise_status = !event_flags.cruise_status;
+			velocity_cruise = velocity_current;
+		}
+
 	}
-	else if(GPIO_Pin == BTN_CRUISE_UP_Pin){
-		sprintf(msg, "\nBUTTON_2 PRESSED\n");
-		HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
+	else if(GPIO_Pin == BTN_CRUISE_UP_Pin)
+	{
+		if(event_flags.cruise_status)
+			if(velocity_cruise + CRUISE_INCREMENT_VAL < CRUISE_MAX)
+				velocity_cruise += CRUISE_INCREMENT_VAL;
+			else
+				velocity_cruise = CRUISE_MAX;
 	}
-	else if(GPIO_Pin == BTN_CRUISE_DOWN_Pin){
-		sprintf(msg, "\nBUTTON_3 PRESSED\n");
-		HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
+	else if(GPIO_Pin == BTN_CRUISE_DOWN_Pin)
+	{
+		if(event_flags.cruise_status)
+			if(velocity_cruise - CRUISE_INCREMENT_VAL > CRUISE_MIN)
+				velocity_cruise -= CRUISE_INCREMENT_VAL;
+			else
+				velocity_cruise = CRUISE_MIN;
 	}
-	else if(GPIO_Pin == BTN_REVERSE_Pin){
-		event_flags.reverse_enable = !event_flags.reverse_enable;
+	else if(GPIO_Pin == BTN_REVERSE_Pin)
+	{
+		if(state == IDLE)
+			event_flags.reverse_enable = !event_flags.reverse_enable;
 	}
 	//osDelay(5);
 }
