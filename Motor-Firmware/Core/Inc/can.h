@@ -42,6 +42,8 @@ extern CAN_HandleTypeDef hcan;
 extern CAN_TxHeaderTypeDef drive_command_header;
 
 extern uint32_t can_mailbox;
+
+extern CAN_RxHeaderTypeDef can_rx_header;
 /* USER CODE END Private defines */
 
 void MX_CAN_Init(void);

@@ -35,6 +35,9 @@ CAN_TxHeaderTypeDef drive_command_header = {
 
 uint32_t can_mailbox;
 
+CAN_RxHeaderTypeDef can_rx_header;    /**< Stores the header information for CAN messages read from
+													     the RX (receive) buffer */
+
 /* USER CODE END 0 */
 
 CAN_HandleTypeDef hcan;

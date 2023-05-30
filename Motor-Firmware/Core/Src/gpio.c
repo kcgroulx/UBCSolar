@@ -61,8 +61,14 @@ void MX_GPIO_Init(void)
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PBPin PBPin PBPin PBPin */
-  GPIO_InitStruct.Pin = BTN_CRUISE_TOGGLE_Pin|BTN_CRUISE_UP_Pin|BTN_CRUISE_DOWN_Pin|BTN_REVERSE_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pin = MECH_BRAKE_Pin|BTN_CRUISE_TOGGLE_Pin|BTN_CRUISE_UP_Pin|BTN_CRUISE_DOWN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PBPin PBPin */
+  GPIO_InitStruct.Pin = SWITCH_REVERSE_Pin|SWITCH_PARK_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 

@@ -1,6 +1,8 @@
-../Core/Src/freertos.c:129:6:MX_FREERTOS_Init	8	static
-../Core/Src/freertos.c:180:6:StartDefaultTask	16	static
-../Core/Src/freertos.c:199:6:getADCValues	16	static
-../Core/Src/freertos.c:230:6:startUpdateFlags	16	static
-../Core/Src/freertos.c:264:6:startMotorStateMachine	64	static
-../Core/Src/freertos.c:319:6:HAL_GPIO_EXTI_Callback	40	static
+../Core/Src/freertos.c:157:6:MX_FREERTOS_Init	8	static
+../Core/Src/freertos.c:214:6:StartDefaultTask	16	static
+../Core/Src/freertos.c:233:6:getADCValues	16	static
+../Core/Src/freertos.c:279:6:startUpdateFlags	16	static
+../Core/Src/freertos.c:309:6:startMotorStateMachine	72	static
+../Core/Src/freertos.c:384:6:startGetCANVelocity	32	static
+../Core/Src/freertos.c:415:6:StartSetCANBatterySO	24	static
+../Core/Src/freertos.c:443:6:HAL_GPIO_EXTI_Callback	16	static
