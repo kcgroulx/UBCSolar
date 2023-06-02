@@ -1,3 +1,4 @@
+"./Core/Src/MCB.o"
 "./Core/Src/adc.o"
 "./Core/Src/can.o"
 "./Core/Src/freertos.o"
@@ -37,4 +38,4 @@
 "./Middlewares/Third_Party/FreeRTOS/Source/tasks.o"
 "./Middlewares/Third_Party/FreeRTOS/Source/timers.o"
 "./Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM3/port.o"
-"./Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.o"
+"./Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_3.o"

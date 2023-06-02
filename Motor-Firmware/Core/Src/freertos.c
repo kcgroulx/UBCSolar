@@ -19,6 +19,9 @@
 // TODO Add gpio inputs (park, reverse, mech_brake) to event_flags?
 // - Adding park reverse and mech_brake to event_flags will in theory lower performance but greatly improve code readablity
 // TODO Confirm velocity readings will be signed.
+// TODO Confirm gpio input pins can use interrupts
+// TODO Next page button
+
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
@@ -32,46 +35,19 @@
 #include "usart.h"
 #include "adc.h"
 #include "can.h"
+#include "MCB.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-enum DriveState {
-	INVALID = (uint32_t) 0x0000,
-    IDLE = (uint32_t) 0x0001,
-    NORMAL_READY = (uint32_t) 0x0002,
-    REGEN_READY = (uint32_t) 0x0004,
-	CRUISE_READY = (uint32_t) 0x0008,
-	MOTOR_OVERHEAT = (uint32_t) 0x0010,
-	PARK = (uint32_t) 0x0012
-} state;
+
 
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define ADC_POLL_DELAY 10
-#define SEND_MOTOR_COMMAND_DELAY 10
-#define ADC_DEADZONE 500
-#define ADC_MAX 4000
-#define TRUE 1
-#define FALSE 0
-#define CAN_DATA_LENGTH 8 			// incoming data is 64 bits total
-#define EVENT_FLAG_UPDATE_DELAY 5
 
-#define MIN_REVERSE_VELOCITY 3
-
-#define GET_CAN_VELOCITY_DELAY 500
-#define READ_BATTERY_SOC_DELAY 5000
-#define DELAY_MOTOR_STATE_MACHINE 10
-
-
-#define CRUISE_INCREMENT_VAL 1 // How much pressing the cruise up/down buttons increase or decrease the cruise velocity
-#define CRUISE_MAX 30 // Max cruise speed
-#define CRUISE_MIN 5 // Min cruise speed
-
-#define BATTERY_SOC_THRESHHOLD 90
 
 
 /* USER CODE END PD */
@@ -86,14 +62,16 @@ enum DriveState {
 uint16_t ADC_throttle_val;
 uint16_t ADC_regen_val;
 
-union FloatBytes velocity_current; // Current velocity of the car will be stored here.
+union FloatBytes velocity_of_car; // Current velocity of the car will be stored here.
 
 struct InputFlags event_flags; // Event flags for deciding what state to be in.
 
-int velocity_cruise;
+float cruise_velocity;
 
-uint8_t battery_soc;
+uint8_t battery_soc; // Stores the charge of the battery, updated in a task.
 
+float current; // These are global so I can view their value in the Live Expressions tab, will move to task later.
+float velocity;
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -138,6 +116,13 @@ const osThreadAttr_t getCANBatterySO_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for updateState */
+osThreadId_t updateStateHandle;
+const osThreadAttr_t updateState_attributes = {
+  .name = "updateState",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -150,6 +135,7 @@ void startUpdateFlags(void *argument);
 void startMotorStateMachine(void *argument);
 void startGetCANVelocity(void *argument);
 void StartSetCANBatterySO(void *argument);
+void StartUpdateState(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -198,6 +184,9 @@ void MX_FREERTOS_Init(void) {
   /* creation of getCANBatterySO */
   getCANBatterySOHandle = osThreadNew(StartSetCANBatterySO, NULL, &getCANBatterySO_attributes);
 
+  /* creation of updateState */
+  updateStateHandle = osThreadNew(StartUpdateState, NULL, &updateState_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -240,34 +229,16 @@ void getADCValues(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	// Get ADC values for throttle and regen
-	HAL_ADC_Start(&hadc1);
-	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-	ADC_throttle_val = HAL_ADC_GetValue(&hadc1);
+	// Get ADC value for throttle and sets event flag
+	ADC_throttle_val = ReadADC(&hadc1);
+	event_flags.throttle_pressed = ADC_throttle_val > ADC_DEADZONE;
 
-	if(ADC_throttle_val > ADC_DEADZONE)
-	{
-		event_flags.throttle_pressed = TRUE;
-		//event_flags.cruise_status = FALSE;
-	}
-	else
-	{
-		event_flags.throttle_pressed = FALSE;
-	}
-
-	HAL_ADC_Start(&hadc2);
-	HAL_ADC_PollForConversion(&hadc2, HAL_MAX_DELAY);
-	ADC_regen_val = HAL_ADC_GetValue(&hadc2);
-
+	// Gets ADC value for regen and sets event flags
+	ADC_regen_val = ReadADC(&hadc2);
+	event_flags.regen_pressed = ADC_regen_val > ADC_DEADZONE;
 	if(ADC_regen_val > ADC_DEADZONE)
-	{
-		event_flags.regen_pressed = TRUE;
-		event_flags.cruise_status = FALSE;
-	}
-	else
-	{
-		event_flags.regen_pressed = FALSE;
-	}
+		event_flags.cruise_enabled = FALSE;
+
     osDelay(ADC_POLL_DELAY);
   }
   /* USER CODE END getADCValues */
@@ -286,18 +257,17 @@ void startUpdateFlags(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	  if (HAL_GPIO_ReadPin(SWITCH_PARK_GPIO_Port, SWITCH_PARK_Pin))
-		  state = PARK;
-	  else if (HAL_GPIO_ReadPin(MECH_BRAKE_GPIO_Port, MECH_BRAKE_Pin))
-		  state = IDLE;
-	  else if (event_flags.regen_pressed && battery_soc < BATTERY_SOC_THRESHHOLD)
-		  state = REGEN_READY;
-	  else if (event_flags.cruise_status)
-	  	 state = CRUISE_READY;
-	  else if (event_flags.throttle_pressed)
-	  	 state = NORMAL_READY;
-	  else
-	  	 state = IDLE;
+
+	  event_flags.mech_brake_pressed = HAL_GPIO_ReadPin(MECH_BRAKE_GPIO_Port, MECH_BRAKE_Pin);
+
+	  event_flags.park_enabled = HAL_GPIO_ReadPin(SWITCH_PARK_GPIO_Port, SWITCH_PARK_Pin);
+
+	  event_flags.reverse_enabled = HAL_GPIO_ReadPin(SWITCH_REVERSE_GPIO_Port, SWITCH_REVERSE_Pin);
+
+	  event_flags.velocity_under_threshold = (velocity_of_car.float_value < MIN_REVERSE_VELOCITY);
+
+	  event_flags.charge_under_threshold = battery_soc < BATTERY_SOC_THRESHHOLD;
+
 	  osDelay(EVENT_FLAG_UPDATE_DELAY);
   }
   /* USER CODE END startUpdateFlags */
@@ -313,66 +283,43 @@ void startUpdateFlags(void *argument)
 void startMotorStateMachine(void *argument)
 {
   /* USER CODE BEGIN startMotorStateMachine */
-  char msg[20];
-  char mode;
-  union FloatBytes current;
-  union FloatBytes velocity;
-  uint8_t data_send[CAN_DATA_LENGTH];
+
   /* Infinite loop */
   for(;;)
   {
 	if(state == PARK)
 	{
-		velocity.float_value = 0;
-		current.float_value = 1;
-
-		mode = 'P';
+		velocity = 0.0;
+		current = 0.0;
 	}
-	else if(state == REGEN_READY)
+	else if(state == REGEN)
     {
-    	velocity.float_value = 0;
-    	current.float_value = (ADC_regen_val - ADC_DEADZONE >= 0 ? ((float)(ADC_regen_val - ADC_DEADZONE))/ADC_MAX : 0.0);
-
-    	mode = 'R';
+    	velocity = 0.0;
+    	current = NormalizeValue(ADC_regen_val);
     }
-    else if(state == NORMAL_READY)
+    else if(state == DRIVE)
     {
-    	if (HAL_GPIO_ReadPin(SWITCH_REVERSE_GPIO_Port, SWITCH_REVERSE_Pin) == 1 && velocity_current.float_value < MIN_REVERSE_VELOCITY)
-    		velocity.float_value = -100.0;
-    	else
-    		velocity.float_value = 100.0;
 
-    	current.float_value = (ADC_throttle_val - ADC_DEADZONE >= 0 ? ((float)(ADC_throttle_val - ADC_DEADZONE))/ADC_MAX : 0.0);
-
-    	mode = 'D';
+    	velocity = 100.0;
+    	current = NormalizeValue(ADC_throttle_val);
     }
-    else if (state == CRUISE_READY)
+    else if(state == REVERSE)
     {
-    	velocity.float_value = velocity_cruise;
-    	current.float_value = 1;
-    	mode = 'C';
+    	velocity = -100.0;
+    	current = NormalizeValue(ADC_throttle_val);
+    }
+    else if (state == CRUISE)
+    {
+    	velocity = cruise_velocity;
+    	current = 1.0;
     }
     else
     {
-    	velocity.float_value = 0;
-    	current.float_value = 0;
-    	mode = 'I';
+    	velocity = 0.0;
+    	current = 0.0;
     }
 
-    sprintf(msg, "S:%c V:%d C:%d   \r", mode,(int)velocity.float_value, (int)(current.float_value*100));
-    HAL_UART_Transmit(&huart2, msg, sizeof(msg),100);
-
-    //TODO test CAN
-    /*
-    // writing data into data_send array which will be sent as a CAN message
-    for (int i = 0; i < (uint8_t) CAN_DATA_LENGTH / 2; i++) {
-    	data_send[i] = velocity.bytes[i];
-        data_send[4 + i] = current.bytes[i];
-    }
-
-    HAL_CAN_AddTxMessage(&hcan, &drive_command_header, data_send, &can_mailbox);
-	*/
-
+	SendCANMotorCommand(velocity, current);
     osDelay(DELAY_MOTOR_STATE_MACHINE);
   }
   /* USER CODE END startMotorStateMachine */
@@ -400,7 +347,7 @@ void startGetCANVelocity(void *argument)
 			{
 				for(int i= 0; i < 4; i++)
 				{
-					velocity_current.bytes[i] = CAN_message[i+4]; // Vechicle Velocity is stored in bits 32-63.
+					velocity_of_car.bytes[i] = CAN_message[i+4]; // Vechicle Velocity is stored in bits 32-63.
 				}
 			}
 		}
@@ -442,40 +389,72 @@ void StartSetCANBatterySO(void *argument)
   /* USER CODE END StartSetCANBatterySO */
 }
 
+/* USER CODE BEGIN Header_StartUpdateState */
+/**
+* @brief Function implementing the updateState thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartUpdateState */
+void StartUpdateState(void *argument)
+{
+  /* USER CODE BEGIN StartUpdateState */
+  /* Infinite loop */
+  for(;;)
+  {
+	  if (event_flags.park_enabled && (state == IDLE || state == PARK || state == REVERSE))
+		  state = PARK;
+	  else if (event_flags.mech_brake_pressed)
+		  state = IDLE;
+	  else if (event_flags.regen_pressed && event_flags.charge_under_threshold)
+	  	  state = REGEN;
+	  else if (event_flags.cruise_enabled)
+	      state = CRUISE;
+	  else if (event_flags.reverse_enabled && event_flags.velocity_under_threshold)
+		  state = REVERSE;
+	  else if (event_flags.throttle_pressed)
+	      state = DRIVE;
+	  else
+	  	  state = IDLE;
+
+	  osDelay(EVENT_FLAG_UPDATE_DELAY);
+  }
+  /* USER CODE END StartUpdateState */
+}
+
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-
-
 	if(GPIO_Pin == BTN_CRUISE_TOGGLE_Pin)
 	{
 
-		if(state == NORMAL_READY || state == CRUISE_READY)
+		if(state == DRIVE || state == CRUISE)
 		{
-			event_flags.cruise_status = !event_flags.cruise_status;
-			velocity_cruise = velocity_current.float_value;
+			event_flags.cruise_enabled = !event_flags.cruise_enabled;
+			cruise_velocity = velocity_of_car.float_value;
 		}
 	}
 	else if(GPIO_Pin == BTN_CRUISE_UP_Pin)
 	{
-		if(event_flags.cruise_status)
-			if(velocity_cruise + CRUISE_INCREMENT_VAL < CRUISE_MAX)
-				velocity_cruise += CRUISE_INCREMENT_VAL;
+		if(state == CRUISE)
+			if(cruise_velocity + CRUISE_INCREMENT_VAL < CRUISE_MAX)
+				cruise_velocity += CRUISE_INCREMENT_VAL;
 			else
-				velocity_cruise = CRUISE_MAX;
+				cruise_velocity = CRUISE_MAX;
 	}
 	else if(GPIO_Pin == BTN_CRUISE_DOWN_Pin)
 	{
-		if(event_flags.cruise_status)
-			if(velocity_cruise - CRUISE_INCREMENT_VAL > CRUISE_MIN)
-				velocity_cruise -= CRUISE_INCREMENT_VAL;
+		if(state == CRUISE)
+			if(cruise_velocity - CRUISE_INCREMENT_VAL > CRUISE_MIN)
+				cruise_velocity -= CRUISE_INCREMENT_VAL;
 			else
-				velocity_cruise = CRUISE_MIN;
+				cruise_velocity = CRUISE_MIN;
 	}
 	else if (GPIO_Pin == MECH_BRAKE_Pin)
 	{
-		event_flags.cruise_status = FALSE;
+		SendCANMotorCommand(0, 0);
+		event_flags.cruise_enabled = FALSE;
 	}
 }
 /* USER CODE END Application */

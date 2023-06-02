@@ -37,43 +37,7 @@ extern "C" {
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
 
-typedef union FloatBytes {
-	float float_value;			/**< Float value member of the union. */
-	uint8_t bytes[4];			/**< Array of 4 bytes member of union. */
-} FloatBytes;
 
-typedef struct InputFlags {
-  volatile uint8_t regen_pressed;			/**< Records the position of the regen padle. A value of 0x01 indicates regenerative braking is
-  	  	  	  	  	  	  	  	  	  	  	 	 enabled and a value of 0x00 indicates that regen is disabled. */
-
-  volatile uint8_t throttle_pressed;			/**< Records the position of the throttle. A value of 0x01 indicates throttle is pressed and
-    	  	  	  	  	  	  	  	  	  	  	 0x00 indicates that throttle is off. */
-
-  volatile uint8_t reverse_enable;			/**< Records the position of the reverse switch. A value of 0x01 indicates "reverse" is enabled
-   	   	   	   	   	   	   	   	   	   	   	 	 and a value of 0x00 indicates that "reverse" is disabled. */
-
-  volatile uint8_t cruise_status;			/**< Records the cruise control status. A value of 0x01 indicates that the CRUISE_EN button has
-   	   	   	   	   	   	   	   	   	   	   	 	 pressed and a value of 0x00 means the CRUISE_DIS button has been pressed. */
-
-  volatile uint8_t brake_in;				/**< Records if the brake has been pressed. A value of 0x01 indicates the brake pedal has been pressed
-  	  	  	  	  	  	  	  	  	  	  	  	 and a value of 0x00 means the brake pedal has not been pressed. This value is used
-  	  	  	  	  	  	  	  	  	  	  	  	 to ensure cruise control mode is exited when the brake pedal is pressed. */
-
-  volatile uint8_t regen_value_is_zero;		/**< Flag that indicates if the regen value read from the ADC is zero or not. A value
-  	  	  	  	  	  	  	  	  	  	  	  	 of 0x01 means the regen value is zero while a value of 0x00 means the regen value
-  	  	  	  	  	  	  	  	  	  	  	  	 is not zero. */
-
-  volatile uint8_t encoder_value_is_zero;	/**< Flag that indicates if the encoder value read from the hardware timer is zero
-  	  	  	  	  	  	  	  	  	  	  	  	 or not. A value of 0x01 means the regen value is zero while a value of 0x00
-  	  	  	  	  	  	  	  	  	  	  	  	 means the regen value is not zero. */
-
-
-} InputFlags;
-
-extern union FloatBytes current;			/**< Stores the current value to send to motor controller over CAN */
-extern union FloatBytes velocity;			/**< Stores the velocity value to send to motor controller over CAN */
-
-extern struct InputFlags event_flags;
 
 /* USER CODE END ET */
 
